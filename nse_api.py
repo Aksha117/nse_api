@@ -2,19 +2,21 @@ from flask import Flask, jsonify
 from nsetools import Nse
 from flask_cors import CORS
 import numpy as np
+import yfinance as yf  # Import Yahoo Finance
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend access
 nse = Nse()
 
-# Function to fetch historical data (Dummy method for now)
+# Function to fetch real historical stock prices from Yahoo Finance
 def get_historical_prices(symbol, days=50):
     try:
-        # Normally, we should fetch real historical prices from an API
-        last_price = nse.get_quote(symbol).get('lastPrice', 0)
-        return [last_price - (i * 1.5) for i in range(days)][::-1]  # Fake decreasing prices
+        yahoo_symbol = f"{symbol}.NS"  # Convert NSE symbol to Yahoo format
+        stock = yf.Ticker(yahoo_symbol)
+        history = stock.history(period=f"{days}d")
+        return list(history['Close'].values)  # Return closing prices
     except:
-        return [0] * days  # Return default values if unavailable
+        return [0] * days  # Default values if data is unavailable
 
 # Function to calculate RSI (Relative Strength Index)
 def calculate_rsi(prices, period=14):
@@ -48,32 +50,48 @@ def calculate_ema(prices, period=50):
         return None
     return round(np.average(prices[-period:], weights=np.exp(np.linspace(-1., 0., period))), 2)
 
+# Function to calculate Bollinger Bands
+def calculate_bollinger_bands(prices, period=20, std_dev=2):
+    if len(prices) < period:
+        return None, None  # Not enough data
+    sma = calculate_sma(prices, period)
+    std = np.std(prices[-period:])
+    upper_band = round(sma + (std_dev * std), 2)
+    lower_band = round(sma - (std_dev * std), 2)
+    return upper_band, lower_band
+
+# Function to fetch stock data from NSE & Yahoo Finance
 @app.route('/get_stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
-    stock_data = nse.get_quote(symbol.upper())  # Fetch stock data
+    stock_data = nse.get_quote(symbol.upper())  # Fetch stock data from NSE
     
     if stock_data:  # Ensure stock data exists
         last_price = stock_data.get('lastPrice', 0)
         historical_prices = get_historical_prices(symbol, 50)  # Fetch actual historical data
 
+        # Calculate technical indicators
         rsi = calculate_rsi(historical_prices)
         sma_50 = calculate_sma(historical_prices, 50)
         ema_50 = calculate_ema(historical_prices, 50)
+        upper_band, lower_band = calculate_bollinger_bands(historical_prices, 20)
 
+        # Fetch fundamental indicators properly
         response = {
             "symbol": symbol.upper(),
             "lastPrice": last_price,
-            "dayHigh": stock_data.get('dayHigh', 'N/A'),
-            "dayLow": stock_data.get('dayLow', 'N/A'),
-            "high52": stock_data.get('high52', 'N/A'),
-            "low52": stock_data.get('low52', 'N/A'),
+            "dayHigh": stock_data.get('dayHigh', stock_data.get('intraDayHighLow', {}).get('max', 'N/A')),
+            "dayLow": stock_data.get('dayLow', stock_data.get('intraDayHighLow', {}).get('min', 'N/A')),
+            "high52": stock_data.get('high52', stock_data.get('weekHighLow', {}).get('max', 'N/A')),
+            "low52": stock_data.get('low52', stock_data.get('weekHighLow', {}).get('min', 'N/A')),
             "rsi": rsi,
             "sma_50": sma_50,
             "ema_50": ema_50,
-            "marketCap": stock_data.get('marketCap', 'N/A'),
-            "peRatio": stock_data.get('pE', 'N/A'),
-            "bookValue": stock_data.get('bookValue', 'N/A'),
-            "dividendYield": stock_data.get('dividendYield', 'N/A')
+            "bollinger_upper": upper_band,
+            "bollinger_lower": lower_band,
+            "marketCap": stock_data.get('marketCap', stock_data.get('info', {}).get('marketCap', 'N/A')),
+            "peRatio": stock_data.get('pE', stock_data.get('info', {}).get('pE', 'N/A')),
+            "bookValue": stock_data.get('bookValue', stock_data.get('info', {}).get('bookValue', 'N/A')),
+            "dividendYield": stock_data.get('dividendYield', stock_data.get('info', {}).get('dividendYield', 'N/A'))
         }
         return jsonify(response)
 
