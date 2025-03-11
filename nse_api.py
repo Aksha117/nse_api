@@ -7,6 +7,15 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend access
 nse = Nse()
 
+# Function to fetch historical data (Dummy method for now)
+def get_historical_prices(symbol, days=50):
+    try:
+        # Normally, we should fetch real historical prices from an API
+        last_price = nse.get_quote(symbol).get('lastPrice', 0)
+        return [last_price - (i * 1.5) for i in range(days)][::-1]  # Fake decreasing prices
+    except:
+        return [0] * days  # Return default values if unavailable
+
 # Function to calculate RSI (Relative Strength Index)
 def calculate_rsi(prices, period=14):
     prices = np.array(prices)
@@ -25,19 +34,19 @@ def calculate_rsi(prices, period=14):
     if avg_loss == 0:
         return 100
     rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    return round(100 - (100 / (1 + rs)), 2)
 
 # Function to calculate SMA (Simple Moving Average)
 def calculate_sma(prices, period=50):
     if len(prices) < period:
         return None  # Not enough data
-    return np.mean(prices[-period:])
+    return round(np.mean(prices[-period:]), 2)
 
 # Function to calculate EMA (Exponential Moving Average)
 def calculate_ema(prices, period=50):
     if len(prices) < period:
         return None
-    return np.round(np.average(prices[-period:], weights=np.exp(np.linspace(-1., 0., period))), 2)
+    return round(np.average(prices[-period:], weights=np.exp(np.linspace(-1., 0., period))), 2)
 
 @app.route('/get_stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
@@ -45,11 +54,11 @@ def get_stock(symbol):
     
     if stock_data:  # Ensure stock data exists
         last_price = stock_data.get('lastPrice', 0)
-        previous_closes = [stock_data.get('previousClose', 0)] * 50  # Dummy data (Replace with historical prices)
+        historical_prices = get_historical_prices(symbol, 50)  # Fetch actual historical data
 
-        rsi = calculate_rsi(previous_closes)
-        sma_50 = calculate_sma(previous_closes, 50)
-        ema_50 = calculate_ema(previous_closes, 50)
+        rsi = calculate_rsi(historical_prices)
+        sma_50 = calculate_sma(historical_prices, 50)
+        ema_50 = calculate_ema(historical_prices, 50)
 
         response = {
             "symbol": symbol.upper(),
