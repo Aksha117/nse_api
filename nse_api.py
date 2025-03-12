@@ -2,11 +2,13 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import numpy as np
 import yfinance as yf
+from nsetools import Nse
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend access
+nse = Nse()
 
-# Function to fetch real historical stock prices from Yahoo Finance
+# Function to fetch historical stock prices from Yahoo Finance
 def get_historical_prices(symbol, days=50):
     try:
         yahoo_symbol = f"{symbol}.NS"  # Convert NSE symbol to Yahoo format
@@ -19,8 +21,32 @@ def get_historical_prices(symbol, days=50):
         return list(history['Close'].values)  # Return closing prices
 
     except Exception as e:
-        print(f"Error fetching historical prices: {e}")
+        print(f"Error fetching historical prices from Yahoo: {e}")
         return [0] * days  # Default values if data is unavailable
+
+# Function to fetch real-time stock price from NSE
+def get_nse_stock_price(symbol):
+    try:
+        stock_data = nse.get_quote(symbol.upper())
+        return stock_data.get('lastPrice', None)
+    except Exception as e:
+        print(f"Error fetching price from NSE: {e}")
+        return None  # Return None if NSE data is unavailable
+
+# Function to fetch stock price from Yahoo Finance
+def get_yahoo_stock_price(symbol):
+    try:
+        yahoo_symbol = f"{symbol}.NS"
+        stock = yf.Ticker(yahoo_symbol)
+        data = stock.history(period="1d")
+        
+        if not data.empty:
+            return data["Close"].iloc[-1]  # Last closing price
+
+    except Exception as e:
+        print(f"Error fetching price from Yahoo: {e}")
+
+    return None  # Return None if Yahoo data is unavailable
 
 # Function to calculate RSI (Relative Strength Index)
 def calculate_rsi(prices, period=14):
@@ -68,7 +94,7 @@ def calculate_bollinger_bands(prices, period=20, std_dev=2):
     
     return upper_band, lower_band
 
-# Function to fetch stock data from Yahoo Finance
+# Function to fetch stock data from NSE & Yahoo Finance
 @app.route('/get_stock/<symbol>', methods=['GET'])
 def get_stock(symbol):
     try:
@@ -76,10 +102,19 @@ def get_stock(symbol):
         stock = yf.Ticker(yahoo_symbol)
         stock_data = stock.history(period="1d")
 
-        if stock_data.empty:
+        # Fetch data from NSE (if available)
+        nse_price = get_nse_stock_price(symbol)
+
+        # Fetch data from Yahoo (as a backup)
+        yahoo_price = get_yahoo_stock_price(symbol)
+
+        # Decide which price to use (Prefer NSE, fallback to Yahoo)
+        last_price = nse_price if nse_price is not None else yahoo_price
+
+        if last_price is None:
             return jsonify({"error": "Stock data not found"}), 404
 
-        last_price = stock_data["Close"].iloc[-1]
+        # Fetch historical prices from Yahoo for technical indicators
         historical_prices = get_historical_prices(symbol, 50)
 
         # Calculate technical indicators
@@ -93,8 +128,10 @@ def get_stock(symbol):
         response = {
             "symbol": symbol.upper(),
             "lastPrice": last_price,
-            "dayHigh": stock_data["High"].iloc[-1],
-            "dayLow": stock_data["Low"].iloc[-1],
+            "nsePrice": nse_price,
+            "yahooPrice": yahoo_price,
+            "dayHigh": stock_data["High"].iloc[-1] if not stock_data.empty else "N/A",
+            "dayLow": stock_data["Low"].iloc[-1] if not stock_data.empty else "N/A",
             "high52": stock_info.get("fiftyTwoWeekHigh", "N/A"),
             "low52": stock_info.get("fiftyTwoWeekLow", "N/A"),
             "rsi": rsi,
