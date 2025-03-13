@@ -53,4 +53,66 @@ def get_news_sentiment(symbol):
         return 0  # Default to neutral sentiment
 
 # ✅ Prediction Route
-@app.route("/predict", methods=["GET
+@app.route("/predict", methods=["GET"])
+def predict():
+    symbol = request.args.get("symbol", "").upper()
+    
+    if not symbol:
+        return jsonify({"error": "Stock symbol is required"}), 400
+    
+    df = get_stock_data(symbol)
+    if df is None:
+        return jsonify({"error": "Invalid stock symbol or no data available"}), 400
+
+    df = compute_indicators(df)
+    df["Sentiment"] = get_news_sentiment(symbol)
+
+    features = ["Close", "SMA_50", "EMA_50", "RSI", "MACD", "Signal", "Sentiment"]
+
+    model_path = f"models/{symbol}_lstm_model.h5"
+    scaler_X_path = f"models/{symbol}_scaler_X.pkl"
+    scaler_y_path = f"models/{symbol}_scaler_y.pkl"
+
+    # ✅ Check if LSTM Model Exists
+    if os.path.exists(model_path):
+        model = load_model(model_path)
+        scaler_X = joblib.load(scaler_X_path)
+        scaler_y = joblib.load(scaler_y_path)
+
+        scaled_features = scaler_X.transform(df[features])
+        sequence = scaled_features[-60:].reshape(1, 60, len(features))
+
+        # Predict with LSTM Model
+        lstm_pred_scaled = model.predict(sequence)
+        lstm_pred = scaler_y.inverse_transform(lstm_pred_scaled.reshape(-1, 1))[0, 0]
+    
+    else:
+        # ✅ Use XGBoost as Fallback
+        xgb_path = f"models/{symbol}_xgb.pkl"
+        if os.path.exists(xgb_path):
+            xgb_model = joblib.load(xgb_path)
+            scaled_features = joblib.load(f"models/{symbol}_scaler_X.pkl").transform(df[features])
+            lstm_pred = joblib.load(f"models/{symbol}_scaler_y.pkl").inverse_transform(
+                xgb_model.predict(scaled_features[-1].reshape(1, -1)).reshape(-1, 1)
+            )[0, 0]
+        else:
+            return jsonify({"error": "Model not found for this stock. Please train first!"}), 404
+
+    # ✅ Response
+    return jsonify({
+        "symbol": symbol,
+        "current_price": round(df["Close"].iloc[-1], 2),
+        "predicted_price": round(lstm_pred, 2),
+        "technical_indicators": {
+            "SMA_50": round(df["SMA_50"].iloc[-1], 2),
+            "EMA_50": round(df["EMA_50"].iloc[-1], 2),
+            "RSI": round(df["RSI"].iloc[-1], 2),
+            "MACD": round(df["MACD"].iloc[-1], 2),
+            "Signal_Line": round(df["Signal"].iloc[-1], 2),
+        },
+        "sentiment_score": round(df["Sentiment"].iloc[-1], 4)
+    })
+
+# ✅ Run Flask App
+if __name__ == "__main__":
+    app.run(debug=True)
